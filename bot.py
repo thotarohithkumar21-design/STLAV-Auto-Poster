@@ -1,71 +1,102 @@
 import os
 import requests
-import json
 import base64
 from google import genai
+from google.genai import types
 
-# Load Secret Keys from GitHub
-GEMINI_KEY = os.environ["GEMINI_KEY"]
-HF_TOKEN = os.environ["HF_TOKEN"]
-# It will safely wait if the Pinterest token isn't added to secrets yet
-PINTEREST_TOKEN = os.environ.get("PINTEREST_TOKEN", "WAITING") 
-PINTEREST_BOARD_ID = "903112600217009679" 
+# Authentication Credentials
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
 
-# 1. Get the Hollywood Prompt from Gemini
-print("Asking Gemini for a VFX concept...")
-client = genai.Client(api_key=GEMINI_KEY)
-prompt_logic = """
-You are an elite VFX Art Director. Write a highly detailed, cinematic image prompt for an AI generator. 
-The subject should be an epic nature landscape, a cinematic superhero, or historical architecture.
-Use rendering terms like: Unreal Engine 5, OctaneRender, 85mm lens, volumetric lighting, photorealistic.
-Return ONLY the raw prompt text, nothing else.
-"""
-response = client.models.generate_content(
-    model='gemini-1.5-flash',
-    contents=prompt_logic
-)
-vfx_prompt = response.text.strip()
-print(f"Generated Prompt: {vfx_prompt}")
+HISTORY_FILE = "history.txt"
+IMAGE_FILE = "latest_image.jpg"
 
-# 2. Generate the Image using Hugging Face (FLUX.1 Schnell)
-print("Requesting image from Hugging Face...")
-API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-payload = {"inputs": vfx_prompt}
+def get_previous_history():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            return f.read().strip()
+    return "No previous history."
 
-image_response = requests.post(API_URL, headers=headers, json=payload)
+def update_history(prompt):
+    lines = []
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            lines = f.readlines()
+    
+    lines.append(f"{prompt}\n")
+    # Keep only the last 15 entries to maintain context limit
+    if len(lines) > 15:
+        lines = lines[-15:]
+        
+    with open(HISTORY_FILE, "w") as f:
+        f.writelines(lines)
 
-if image_response.status_code == 200:
-    image_bytes = image_response.content
-    print("Image generated successfully!")
-else:
-    print(f"Image generation failed: {image_response.text}")
-    exit()
+def generate_prompt(history):
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    system_instruction = """You are an elite concept artist and blockbuster film cinematographer. Your job is to write highly detailed, evocative text-to-image prompts for a state-of-the-art image generator.
+Core Objective: Generate a single, highly descriptive paragraph that paints a vivid, story-driven scene. The image must look like a high-budget cinematic masterpiece.
+Visual Requirements:
+- Lighting: Always specify high-end lighting techniques (e.g., volumetric rays, chiaroscuro, dramatic rim lighting).
+- Camera & Composition: Include precise lens details and angles (e.g., 35mm anamorphic, low-angle).
+- Quality: Enforce maximum visual fidelity (e.g., 8k resolution, photorealistic, highly detailed).
 
-# 3. Upload to Pinterest
-if PINTEREST_TOKEN != "WAITING":
-    print("Uploading to Pinterest...")
-    pinterest_url = "https://api.pinterest.com/v5/pins"
-    pin_headers = {
-        "Authorization": f"Bearer {PINTEREST_TOKEN}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+Subject Matter Rotation: Select ONE of the following themes. CRUCIAL: Never generate the same scenario twice. Review the history and ensure this prompt is entirely different.
+1. Hindu Deities
+2. Jesus
+3. Islamic Visual Themes (Breathtaking architecture, glowing calligraphy)
+4. Marvel Superheroes
+
+Output Format: Return ONLY the final image prompt text. Do not include quotes, pleasantries, or formatting."""
+
+    prompt_request = f"Previous generated prompts (AVOID REPEATING THESE):\n{history}\n\nGenerate a brand new, completely unique prompt following the system instructions."
+    
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt_request,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.9,
+        ),
+    )
+    return response.text.strip()
+
+def generate_image(prompt):
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell"
+    headers = {
+        "Authorization": f"Bearer {CF_API_TOKEN}",
+        "Content-Type": "application/json"
     }
-    
-    encoded_image = base64.b64encode(image_bytes).decode('utf-8')
-    
-    pin_payload = {
-        "board_id": PINTEREST_BOARD_ID,
-        "media_source": {
-            "source_type": "image_base64",
-            "content_type": "image/jpeg",
-            "data": encoded_image
-        },
-        "title": "Cinematic Masterpiece",
-        "description": f"{vfx_prompt} #cinematic #VFX #DigitalArt"
+    payload = {
+        "prompt": prompt,
+        "steps": 4
     }
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    data = response.json()
     
-    pin_response = requests.post(pinterest_url, headers=pin_headers, json=pin_payload)
-    print(f"Pinterest Response: {pin_response.status_code}")
-else:
-    print("Bot ran successfully! Waiting on Pinterest token to enable uploading.")
+    b64_image = data['result']['image']
+    image_bytes = base64.b64decode(b64_image)
+    
+    with open(IMAGE_FILE, "wb") as f:
+        f.write(image_bytes)
+
+def main():
+    print("Reading memory log...")
+    history = get_previous_history()
+    
+    print("Generating new cinematic concept...")
+    new_prompt = generate_prompt(history)
+    print(f"Generated Prompt:\n{new_prompt}\n")
+    
+    print("Rendering image via Cloudflare...")
+    generate_image(new_prompt)
+    
+    print("Updating memory log...")
+    update_history(new_prompt)
+    
+    print("Execution complete. Image successfully saved.")
+
+if __name__ == "__main__":
+    main()

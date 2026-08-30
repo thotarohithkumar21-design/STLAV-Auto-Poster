@@ -1,6 +1,7 @@
 import os
 import requests
 import base64
+import json
 from google import genai
 from google.genai import types
 
@@ -19,39 +20,40 @@ def get_previous_history():
             return f.read().strip()
     return "No previous history."
 
-def update_history(prompt):
+def update_history(prompt_text):
     lines = []
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f:
             lines = f.readlines()
     
-    lines.append(f"{prompt}\n")
+    lines.append(f"{prompt_text}\n")
     if len(lines) > 15:
         lines = lines[-15:]
         
     with open(HISTORY_FILE, "w") as f:
         f.writelines(lines)
 
-def generate_prompt(history):
+def generate_content(history):
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    system_instruction = """You are an elite concept artist and blockbuster film cinematographer. Your job is to write highly detailed, evocative text-to-image prompts for a state-of-the-art image generator.
-Core Objective: Generate a single, highly descriptive paragraph that paints a vivid, story-driven scene in vertical portrait orientation. The image must look like a high-budget cinematic masterpiece.
-Visual Requirements:
-- Framing: Vertical composition, portrait orientation.
-- Lighting: Always specify high-end lighting techniques (e.g., volumetric rays, chiaroscuro).
-- Camera & Composition: Include precise lens details and angles.
-- Quality: Enforce maximum visual fidelity (e.g., 8k resolution, photorealistic).
-
-Subject Matter Rotation: Select ONE of the following themes. CRUCIAL: Never generate the same scenario twice. Review the history and ensure this prompt is entirely different.
+    system_instruction = """You are an elite concept artist and social media manager.
+Your job is to generate a cinematic text-to-image prompt, and create a highly engaging Pinterest title, description, and hashtags.
+Visual Requirements: Vertical composition, high-end cinematic lighting, photorealistic 8k resolution.
+Subject Matter Rotation: Select ONE of the following themes. NEVER repeat previous concepts.
 1. Hindu Deities
 2. Jesus
 3. Islamic Visual Themes (Breathtaking architecture, glowing calligraphy)
 4. Marvel Superheroes
 
-Output Format: Return ONLY the final image prompt text. Do not include quotes, pleasantries, or formatting."""
+Return a valid JSON object matching this schema exactly:
+{
+  "image_prompt": "The detailed cinematic prompt for the AI generator",
+  "title": "A catchy Pinterest Title (max 100 chars)",
+  "description": "An engaging description for the image.",
+  "hashtags": "#epic #art #cinematic (3 to 5 relevant hashtags)"
+}"""
 
-    prompt_request = f"Previous generated prompts (AVOID REPEATING THESE):\n{history}\n\nGenerate a brand new, completely unique prompt following the system instructions."
+    prompt_request = f"Previous concepts (AVOID THESE):\n{history}\n\nGenerate brand new JSON content."
     
     response = client.models.generate_content(
         model='gemini-3.6-flash',
@@ -59,10 +61,11 @@ Output Format: Return ONLY the final image prompt text. Do not include quotes, p
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.9,
+            response_mime_type="application/json",
             tools=[]
         ),
     )
-    return response.text.strip()
+    return json.loads(response.text.strip())
 
 def generate_image(prompt):
     clean_account_id = str(CF_ACCOUNT_ID).strip()
@@ -71,11 +74,12 @@ def generate_image(prompt):
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json"
     }
+    
+    # FIXED: Removed width and height parameters that caused the Cloudflare 400 Error.
+    # The Flux model defaults to 1024x1024, but the text prompt ensures a vertical composition.
     payload = {
         "prompt": prompt,
-        "steps": 4,
-        "width": 576,
-        "height": 1024
+        "steps": 4
     }
     
     response = requests.post(url, headers=headers, json=payload)
@@ -88,12 +92,18 @@ def generate_image(prompt):
     with open(IMAGE_FILE, "wb") as f:
         f.write(image_bytes)
 
-def post_to_pinterest(prompt):
-    print("Sending image to Make.com webhook...")
+def post_to_pinterest(metadata):
+    print("Sending image and metadata to Make.com webhook...")
+    
+    # Combine description and hashtags for Pinterest
+    full_description = f"{metadata['description']}\n\n{metadata['hashtags']}"
+    
     with open(IMAGE_FILE, "rb") as f:
-        # We attach the image file and the prompt text
         files = {'file': (IMAGE_FILE, f, 'image/jpeg')}
-        data = {'description': prompt}
+        data = {
+            'title': metadata['title'],
+            'description': full_description
+        }
         response = requests.post(MAKE_WEBHOOK_URL, files=files, data=data)
     
     if response.status_code == 200:
@@ -102,13 +112,22 @@ def post_to_pinterest(prompt):
         print(f"Webhook Error: {response.text}")
 
 def main():
+    print("Reading memory log...")
     history = get_previous_history()
-    new_prompt = generate_prompt(history)
-    print(f"Generated Prompt:\n{new_prompt}\n")
-    generate_image(new_prompt)
-    post_to_pinterest(new_prompt)
-    update_history(new_prompt)
-    print("Execution complete.")
+    
+    print("Generating new concept and Pinterest metadata...")
+    metadata = generate_content(history)
+    print(f"Generated Title: {metadata['title']}")
+    
+    print("Rendering image via Cloudflare...")
+    generate_image(metadata["image_prompt"])
+    
+    post_to_pinterest(metadata)
+    
+    print("Updating memory log...")
+    update_history(metadata["image_prompt"])
+    
+    print("Execution complete. Ready for Pinterest!")
 
 if __name__ == "__main__":
     main()

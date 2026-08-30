@@ -25,7 +25,6 @@ def update_history(prompt):
             lines = f.readlines()
     
     lines.append(f"{prompt}\n")
-    # Keep only the last 15 entries to maintain context limit
     if len(lines) > 15:
         lines = lines[-15:]
         
@@ -58,12 +57,16 @@ Output Format: Return ONLY the final image prompt text. Do not include quotes, p
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.9,
+            tools=[] 
         ),
     )
     return response.text.strip()
 
 def generate_image(prompt):
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell"
+    # Strip any accidental whitespace or hidden characters from the Account ID
+    clean_account_id = str(CF_ACCOUNT_ID).strip()
+    
+    url = f"https://api.cloudflare.com/client/v4/accounts/{clean_account_id}/ai/run/@cf/black-forest-labs/flux-1-schnell"
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json"
@@ -72,8 +75,17 @@ def generate_image(prompt):
         "prompt": prompt,
         "steps": 4
     }
+    
     response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
+    
+    # NEW: Enhanced error logging to catch the exact Cloudflare rejection reason
+    if response.status_code != 200:
+        print(f"\n--- CLOUDFLARE API ERROR ---")
+        print(f"Status Code: {response.status_code}")
+        print(f"Error Response: {response.text}")
+        print(f"Attempted URL: https://api.cloudflare.com/client/v4/accounts/***/ai/run/@cf/black-forest-labs/flux-1-schnell\n")
+        response.raise_for_status()
+        
     data = response.json()
     
     b64_image = data['result']['image']

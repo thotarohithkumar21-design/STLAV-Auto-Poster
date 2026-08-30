@@ -25,6 +25,7 @@ def update_history(prompt):
             lines = f.readlines()
     
     lines.append(f"{prompt}\n")
+    # Keep only the last 15 entries to maintain context limit
     if len(lines) > 15:
         lines = lines[-15:]
         
@@ -35,16 +36,17 @@ def generate_prompt(history):
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     system_instruction = """You are an elite concept artist and blockbuster film cinematographer. Your job is to write highly detailed, evocative text-to-image prompts for a state-of-the-art image generator.
-Core Objective: Generate a single, highly descriptive paragraph that paints a vivid, story-driven scene. The image must look like a high-budget cinematic masterpiece.
+Core Objective: Generate a single, highly descriptive paragraph that paints a vivid, story-driven scene in vertical portrait orientation. The image must look like a high-budget cinematic masterpiece.
 Visual Requirements:
-- Lighting: Always specify high-end lighting techniques (e.g., volumetric rays, chiaroscuro, dramatic rim lighting).
-- Camera & Composition: Include precise lens details and angles (e.g., 35mm anamorphic, low-angle).
-- Quality: Enforce maximum visual fidelity (e.g., 8k resolution, photorealistic, highly detailed).
+- Framing: Vertical composition, portrait orientation, majestic vertical framing.
+- Lighting: Always specify high-end lighting techniques (e.g., volumetric rays, chiaroscuro, dramatic rim lighting, ethereal bioluminescence).
+- Camera & Composition: Include precise lens details and angles (e.g., 35mm anamorphic portrait, low-angle hero shot, vertical panoramic depth).
+- Quality: Enforce maximum visual fidelity (e.g., 8k resolution, photorealistic, hyper-detailed texture, cinematic masterpiece).
 
 Subject Matter Rotation: Select ONE of the following themes. CRUCIAL: Never generate the same scenario twice. Review the history and ensure this prompt is entirely different.
 1. Hindu Deities
 2. Jesus
-3. Islamic Visual Themes (Breathtaking architecture, glowing calligraphy)
+3. Islamic Visual Themes (Breathtaking architecture, glowing calligraphy, celestial geometric patterns)
 4. Marvel Superheroes
 
 Output Format: Return ONLY the final image prompt text. Do not include quotes, pleasantries, or formatting."""
@@ -57,15 +59,13 @@ Output Format: Return ONLY the final image prompt text. Do not include quotes, p
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.9,
-            tools=[] 
+            tools=[]
         ),
     )
     return response.text.strip()
 
 def generate_image(prompt):
-    # Strip any accidental whitespace or hidden characters from the Account ID
     clean_account_id = str(CF_ACCOUNT_ID).strip()
-    
     url = f"https://api.cloudflare.com/client/v4/accounts/{clean_account_id}/ai/run/@cf/black-forest-labs/flux-1-schnell"
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN}",
@@ -73,21 +73,20 @@ def generate_image(prompt):
     }
     payload = {
         "prompt": prompt,
-        "steps": 4
+        "steps": 4,
+        "width": 576,
+        "height": 1024
     }
     
     response = requests.post(url, headers=headers, json=payload)
     
-    # NEW: Enhanced error logging to catch the exact Cloudflare rejection reason
     if response.status_code != 200:
         print(f"\n--- CLOUDFLARE API ERROR ---")
         print(f"Status Code: {response.status_code}")
         print(f"Error Response: {response.text}")
-        print(f"Attempted URL: https://api.cloudflare.com/client/v4/accounts/***/ai/run/@cf/black-forest-labs/flux-1-schnell\n")
         response.raise_for_status()
         
     data = response.json()
-    
     b64_image = data['result']['image']
     image_bytes = base64.b64decode(b64_image)
     
@@ -98,17 +97,17 @@ def main():
     print("Reading memory log...")
     history = get_previous_history()
     
-    print("Generating new cinematic concept...")
+    print("Generating new cinematic portrait concept...")
     new_prompt = generate_prompt(history)
     print(f"Generated Prompt:\n{new_prompt}\n")
     
-    print("Rendering image via Cloudflare...")
+    print("Rendering portrait image via Cloudflare...")
     generate_image(new_prompt)
     
     print("Updating memory log...")
     update_history(new_prompt)
     
-    print("Execution complete. Image successfully saved.")
+    print("Execution complete. Portrait image successfully saved.")
 
 if __name__ == "__main__":
     main()

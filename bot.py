@@ -52,12 +52,14 @@ Output Format: Return ONLY the final image prompt text. Do not include quotes, p
 
     prompt_request = f"Previous generated prompts (AVOID REPEATING THESE):\n{history}\n\nGenerate a brand new, completely unique prompt following the system instructions."
     
+    # FIX: Updated config structure to prevent the AFC warning crash
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt_request,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.9,
+            tools=[] # Explicitly pass an empty list to bypass the AFC bug
         ),
     )
     return response.text.strip()

@@ -38,7 +38,7 @@ def generate_content(history):
     
     system_instruction = """You are an elite concept artist and social media manager.
 Your job is to generate a cinematic text-to-image prompt, and create a highly engaging Pinterest title, description, and hashtags.
-Visual Requirements: Vertical composition, high-end cinematic lighting, photorealistic 8k resolution.
+Visual Requirements: Vertical composition, cinematic lighting, photorealistic 8k resolution.
 Subject Matter Rotation: Select ONE of the following themes. NEVER repeat previous concepts.
 1. Hindu Deities
 2. Jesus
@@ -74,9 +74,6 @@ def generate_image(prompt):
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json"
     }
-    
-    # FIXED: Removed width and height parameters that caused the Cloudflare 400 Error.
-    # The Flux model defaults to 1024x1024, but the text prompt ensures a vertical composition.
     payload = {
         "prompt": prompt,
         "steps": 4
@@ -87,27 +84,27 @@ def generate_image(prompt):
         response.raise_for_status()
         
     data = response.json()
-    image_bytes = base64.b64decode(data['result']['image'])
+    b64_image = data['result']['image']
     
+    # Save a copy locally to repo
     with open(IMAGE_FILE, "wb") as f:
-        f.write(image_bytes)
+        f.write(base64.b64decode(b64_image))
+        
+    return b64_image
 
-def post_to_pinterest(metadata):
-    print("Sending image and metadata to Make.com webhook...")
-    
-    # Combine description and hashtags for Pinterest
+def post_to_make(metadata, b64_image):
+    print("Sending clean JSON data to Make.com...")
     full_description = f"{metadata['description']}\n\n{metadata['hashtags']}"
     
-    with open(IMAGE_FILE, "rb") as f:
-        files = {'file': (IMAGE_FILE, f, 'image/jpeg')}
-        data = {
-            'title': metadata['title'],
-            'description': full_description
-        }
-        response = requests.post(MAKE_WEBHOOK_URL, files=files, data=data)
+    payload = {
+        "title": metadata["title"],
+        "description": full_description,
+        "image_base64": b64_image
+    }
     
+    response = requests.post(MAKE_WEBHOOK_URL, json=payload)
     if response.status_code == 200:
-        print("Successfully routed to Make.com!")
+        print("Successfully sent to Make.com!")
     else:
         print(f"Webhook Error: {response.text}")
 
@@ -120,14 +117,13 @@ def main():
     print(f"Generated Title: {metadata['title']}")
     
     print("Rendering image via Cloudflare...")
-    generate_image(metadata["image_prompt"])
+    b64_image = generate_image(metadata["image_prompt"])
     
-    post_to_pinterest(metadata)
+    post_to_make(metadata, b64_image)
     
     print("Updating memory log...")
     update_history(metadata["image_prompt"])
-    
-    print("Execution complete. Ready for Pinterest!")
+    print("Execution complete.")
 
 if __name__ == "__main__":
     main()
